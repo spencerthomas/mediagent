@@ -1,0 +1,9 @@
+{
+  "node_version": "20",
+  "dockerfile_lines": [],
+  "dependencies": ["."],
+  "graphs": {
+    "agent": "./src/medical_agent/medical_graph.ts:medicalGraph"
+  },
+  "env": ".env"
+}
