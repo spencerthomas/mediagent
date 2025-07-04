@@ -3,7 +3,7 @@
   "dockerfile_lines": [],
   "dependencies": ["."],
   "graphs": {
-    "agent": "./src/medical_agent/medical_graph.ts:medicalGraph"
+    "agent": "./src/medical_agent/medical_graph.ts:graph"
   },
   "env": ".env"
 }

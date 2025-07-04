@@ -574,3 +574,9 @@ export function createMedicalGraph() {
 
 // Export the compiled graph
 export const medicalGraph = createMedicalGraph();
+
+// Also export as 'graph' to match LangGraph Studio expectations
+export const graph = medicalGraph;
+
+// Default export for LangGraph Studio compatibility
+export default medicalGraph;
