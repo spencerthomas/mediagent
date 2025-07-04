@@ -89,14 +89,16 @@ async function patientInteraction(
     const questions = await patientQuestionAgent.generateQuestions(state, config);
     
     if (questions.length > 0) {
+      const roundNumber = state.interactionRound + 1;
       return {
         pendingQuestions: questions,
         questionHistory: [...state.questionHistory, ...questions],
         awaitingUserInput: true,
+        interactionRound: roundNumber,
         currentPhase: 'patient_interaction',
         messages: [
           ...state.messages,
-          new AIMessage(`I need some additional information to help with your diagnosis. Please answer the following questions:\n\n${
+          new AIMessage(`**Patient Interview - Round ${roundNumber}**\n\nI need some additional information to help with your diagnosis. Please answer the following questions:\n\n${
             questions.map((q, i) => `${i + 1}. ${q.question}`).join('\n')
           }`)
         ]
@@ -127,16 +129,46 @@ async function processUserResponse(
       config
     );
     
-    return {
-      availableCaseInfo: updatedCaseInfo,
-      pendingQuestions: [], // Clear pending questions
-      awaitingUserInput: false,
-      currentPhase: 'information_gathering', // Continue with analysis
-      messages: [
-        ...state.messages,
-        new AIMessage("Thank you for the additional information. Let me analyze this with my medical team.")
-      ]
-    };
+    // Determine what information was gathered from this response
+    try {
+      const extractedInfo = JSON.parse(lastMessage.content);
+      const updatedGathered = gatekeeper.identifyGatheredInformation(
+        lastMessage.content,
+        extractedInfo,
+        state.requiredInformationGathered
+      );
+      
+      return {
+        availableCaseInfo: updatedCaseInfo,
+        requiredInformationGathered: updatedGathered,
+        pendingQuestions: [], // Clear pending questions
+        awaitingUserInput: false,
+        currentPhase: 'information_gathering', // Continue with analysis
+        messages: [
+          ...state.messages,
+          new AIMessage(`Thank you for the additional information from Round ${state.interactionRound}. Let me analyze this with my medical team and determine if we need any clarification.`)
+        ]
+      };
+    } catch {
+      // Fallback for non-JSON responses
+      const updatedGathered = gatekeeper.identifyGatheredInformation(
+        lastMessage.content,
+        {},
+        state.requiredInformationGathered
+      );
+      
+      return {
+        availableCaseInfo: updatedCaseInfo,
+        requiredInformationGathered: updatedGathered,
+        pendingQuestions: [], // Clear pending questions
+        awaitingUserInput: false,
+        currentPhase: 'information_gathering', // Continue with analysis
+        messages: [
+          ...state.messages,
+          new AIMessage(`Thank you for the additional information from Round ${state.interactionRound}. Let me analyze this with my medical team and determine if we need any clarification.`)
+        ]
+      };
+    }
   }
   
   return {};
@@ -230,8 +262,17 @@ function routeWorkflow(state: MedicalDiagnosticStateType): string {
     return 'patient_interaction';
   }
   
-  // Check if final diagnosis is ready
+  // PRIORITY: Check if patient interaction is needed (more aggressive)
+  if (patientQuestionAgent.shouldGenerateQuestions(state)) {
+    return 'patient_interaction';
+  }
+  
+  // Check if final diagnosis is ready (only after sufficient patient interaction)
   if (state.readyForDiagnosis || state.currentPhase === 'final_diagnosis') {
+    // Ensure we've had enough patient interaction before final diagnosis
+    if (state.interactionRound < 3 && state.confidenceLevel < 0.8) {
+      return 'patient_interaction';
+    }
     return 'final_assessment';
   }
   
@@ -240,13 +281,16 @@ function routeWorkflow(state: MedicalDiagnosticStateType): string {
     return 'final_assessment';
   }
   
-  // Check if maximum rounds reached
+  // Check if maximum debate rounds reached (but still allow patient interaction)
   if (state.debateRound >= 5) {
+    if (state.interactionRound < 3 || patientQuestionAgent.shouldGenerateQuestions(state)) {
+      return 'patient_interaction';
+    }
     return 'final_assessment';
   }
   
-  // Check if patient interaction is needed
-  if (patientQuestionAgent.shouldGenerateQuestions(state)) {
+  // Force patient interaction after every 2 debate rounds if we haven't had enough
+  if (state.debateRound > 0 && state.debateRound % 2 === 0 && state.interactionRound < 3) {
     return 'patient_interaction';
   }
   

@@ -247,8 +247,8 @@ Patient: ${info.patientId}
 Age: ${info.demographics.age}, Gender: ${info.demographics.gender}
 Chief Complaint: ${info.chiefComplaint}
 ${info.historyOfPresentIllness ? `History: ${info.historyOfPresentIllness}` : ''}
-${info.pastMedicalHistory?.length ? `Past Medical History: ${info.pastMedicalHistory.join(', ')}` : ''}
-${info.medications?.length ? `Medications: ${info.medications.join(', ')}` : ''}
+${info.pastMedicalHistory?.length && Array.isArray(info.pastMedicalHistory) ? `Past Medical History: ${info.pastMedicalHistory.join(', ')}` : ''}
+${info.medications?.length && Array.isArray(info.medications) ? `Medications: ${info.medications.join(', ')}` : ''}
 `;
   }
 

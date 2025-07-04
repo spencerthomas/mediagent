@@ -102,6 +102,8 @@ export interface MedicalDiagnosticState {
   awaitingUserInput: boolean;
   questionHistory: PatientQuestion[];
   userResponses: PatientResponse[];
+  interactionRound: number;
+  requiredInformationGathered: string[];
   
   // Decision tracking
   confidenceLevel: number;
@@ -193,6 +195,14 @@ export const MedicalDiagnosticAnnotation = Annotation.Root({
   }),
   userResponses: Annotation<PatientResponse[]>({
     reducer: (current, update) => current.concat(update),
+    default: () => [],
+  }),
+  interactionRound: Annotation<number>({
+    reducer: (current, update) => update !== undefined ? update : current,
+    default: () => 0,
+  }),
+  requiredInformationGathered: Annotation<string[]>({
+    reducer: (current, update) => update || current,
     default: () => [],
   }),
 });

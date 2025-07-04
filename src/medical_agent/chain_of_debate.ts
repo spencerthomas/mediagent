@@ -24,7 +24,7 @@ export class ChainOfDebate {
     config: Partial<DebateConfiguration> = {}
   ) {
     this.debateConfig = {
-      maxRounds: 5,
+      maxRounds: 2,
       confidenceThreshold: 0.8,
       costBudgetLimit: 1000,
       participatingAgents: ['hypothesis', 'test_chooser', 'challenger', 'stewardship', 'checklist'],

@@ -452,25 +452,33 @@ Only include fields that have new information. Preserve existing information and
     try {
       const extractedInfo = JSON.parse(response.content as string);
       
+      // Helper function to ensure arrays
+      const ensureArray = (value: any): string[] => {
+        if (!value) return [];
+        if (Array.isArray(value)) return value;
+        if (typeof value === 'string') return [value];
+        return [];
+      };
+
       // Merge with existing case information
       const updatedCaseInfo: CaseInformation = {
         ...state.availableCaseInfo,
         ...extractedInfo,
         pastMedicalHistory: [
-          ...(state.availableCaseInfo.pastMedicalHistory || []),
-          ...(extractedInfo.pastMedicalHistory || [])
+          ...ensureArray(state.availableCaseInfo.pastMedicalHistory),
+          ...ensureArray(extractedInfo.pastMedicalHistory)
         ].filter((item, index, array) => array.indexOf(item) === index), // Remove duplicates
         medications: [
-          ...(state.availableCaseInfo.medications || []),
-          ...(extractedInfo.medications || [])
+          ...ensureArray(state.availableCaseInfo.medications),
+          ...ensureArray(extractedInfo.medications)
         ].filter((item, index, array) => array.indexOf(item) === index),
         allergies: [
-          ...(state.availableCaseInfo.allergies || []),
-          ...(extractedInfo.allergies || [])
+          ...ensureArray(state.availableCaseInfo.allergies),
+          ...ensureArray(extractedInfo.allergies)
         ].filter((item, index, array) => array.indexOf(item) === index),
         familyHistory: [
-          ...(state.availableCaseInfo.familyHistory || []),
-          ...(extractedInfo.familyHistory || [])
+          ...ensureArray(state.availableCaseInfo.familyHistory),
+          ...ensureArray(extractedInfo.familyHistory)
         ].filter((item, index, array) => array.indexOf(item) === index),
         reviewOfSystems: {
           ...state.availableCaseInfo.reviewOfSystems,
@@ -494,6 +502,49 @@ Only include fields that have new information. Preserve existing information and
         historyOfPresentIllness: enhancedHistory
       };
     }
+  }
+
+  /**
+   * Determine what types of information were gathered from the response
+   */
+  identifyGatheredInformation(
+    userResponse: string,
+    extractedInfo: any,
+    currentGathered: string[]
+  ): string[] {
+    const newGathered = [...currentGathered];
+    const responseLower = userResponse.toLowerCase();
+    
+    // Check for different types of information in response
+    if (extractedInfo.medications && extractedInfo.medications.length > 0) {
+      if (!newGathered.includes('medications')) newGathered.push('medications');
+    }
+    
+    if (extractedInfo.allergies && extractedInfo.allergies.length > 0) {
+      if (!newGathered.includes('allergies')) newGathered.push('allergies');
+    }
+    
+    if (extractedInfo.familyHistory && extractedInfo.familyHistory.length > 0) {
+      if (!newGathered.includes('family_history')) newGathered.push('family_history');
+    }
+    
+    if (responseLower.includes('started') || responseLower.includes('began') || 
+        responseLower.includes('ago') || responseLower.includes('since')) {
+      if (!newGathered.includes('symptom_timeline')) newGathered.push('symptom_timeline');
+    }
+    
+    if (responseLower.includes('pain') && (responseLower.includes('/10') || 
+        responseLower.includes('severe') || responseLower.includes('mild') || 
+        responseLower.includes('moderate'))) {
+      if (!newGathered.includes('symptom_severity')) newGathered.push('symptom_severity');
+    }
+    
+    if (extractedInfo.socialHistory || responseLower.includes('smoke') || 
+        responseLower.includes('drink') || responseLower.includes('work')) {
+      if (!newGathered.includes('social_history')) newGathered.push('social_history');
+    }
+    
+    return newGathered;
   }
 
   /**
