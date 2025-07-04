@@ -143,8 +143,49 @@ async function patientInteraction(
   state: MedicalDiagnosticStateType,
   config: RunnableConfig
 ): Promise<Partial<MedicalDiagnosticStateType>> {
-  // If we have pending questions, wait for user input
-  if (state.pendingQuestions.length > 0) {
+  console.log("🔄 patientInteraction called");
+  console.log("Pending questions:", state.pendingQuestions.length);
+  console.log("Awaiting user input:", state.awaitingUserInput);
+  console.log("Last message type:", state.messages[state.messages.length - 1]?.getType());
+  
+  const lastMessage = state.messages[state.messages.length - 1];
+  const isUserResponse = lastMessage?.getType() === 'human';
+  
+  // If we have pending questions AND the last message is a user response, process it
+  if (state.pendingQuestions.length > 0 && isUserResponse) {
+    console.log("📝 Processing user response to pending questions");
+    
+    // Process the user's response through the gatekeeper
+    const updatedCaseInfo = await gatekeeper.processUserResponse(
+      state,
+      typeof lastMessage.content === 'string' ? lastMessage.content : '',
+      config
+    );
+    
+    // Determine what information was gathered from this response
+    const responseText = typeof lastMessage.content === 'string' ? lastMessage.content : '';
+    const updatedGathered = gatekeeper.identifyGatheredInformation(
+      responseText,
+      {},
+      state.requiredInformationGathered
+    );
+    
+    return {
+      availableCaseInfo: updatedCaseInfo,
+      requiredInformationGathered: updatedGathered,
+      pendingQuestions: [], // Clear pending questions after processing response
+      awaitingUserInput: false,
+      currentPhase: 'information_gathering',
+      messages: [
+        ...state.messages,
+        new AIMessage(`Thank you for the additional information from Round ${state.interactionRound}. Let me analyze this with my medical team and determine if we need any clarification.`)
+      ]
+    };
+  }
+  
+  // If we have pending questions but NO user response yet, ask the questions
+  if (state.pendingQuestions.length > 0 && !isUserResponse) {
+    console.log("❓ Asking pending questions - waiting for user input");
     return {
       awaitingUserInput: true,
       messages: [
@@ -158,6 +199,7 @@ async function patientInteraction(
 
   // Generate new questions if needed
   if (patientQuestionAgent.shouldGenerateQuestions(state)) {
+    console.log("🤔 Generating new questions");
     const questions = await patientQuestionAgent.generateQuestions(state, config);
     
     if (questions.length > 0) {
@@ -178,73 +220,10 @@ async function patientInteraction(
     }
   }
   
+  console.log("✅ No questions needed, continuing workflow");
   return {};
 }
 
-/**
- * Node: Process User Response
- * Processes user responses to patient questions
- */
-async function processUserResponse(
-  state: MedicalDiagnosticStateType,
-  config: RunnableConfig
-): Promise<Partial<MedicalDiagnosticStateType>> {
-  // This node is called when user provides responses
-  // The actual response processing is handled by the gatekeeper
-  const lastMessage = state.messages[state.messages.length - 1];
-  
-  if (lastMessage && typeof lastMessage.content === 'string') {
-    // Process the user's response through the gatekeeper
-    const updatedCaseInfo = await gatekeeper.processUserResponse(
-      state,
-      lastMessage.content,
-      config
-    );
-    
-    // Determine what information was gathered from this response
-    try {
-      const extractedInfo = JSON.parse(lastMessage.content);
-      const updatedGathered = gatekeeper.identifyGatheredInformation(
-        lastMessage.content,
-        extractedInfo,
-        state.requiredInformationGathered
-      );
-      
-      return {
-        availableCaseInfo: updatedCaseInfo,
-        requiredInformationGathered: updatedGathered,
-        pendingQuestions: [], // Clear pending questions
-        awaitingUserInput: false,
-        currentPhase: 'information_gathering', // Continue with analysis
-        messages: [
-          ...state.messages,
-          new AIMessage(`Thank you for the additional information from Round ${state.interactionRound}. Let me analyze this with my medical team and determine if we need any clarification.`)
-        ]
-      };
-    } catch {
-      // Fallback for non-JSON responses
-      const updatedGathered = gatekeeper.identifyGatheredInformation(
-        lastMessage.content,
-        {},
-        state.requiredInformationGathered
-      );
-      
-      return {
-        availableCaseInfo: updatedCaseInfo,
-        requiredInformationGathered: updatedGathered,
-        pendingQuestions: [], // Clear pending questions
-        awaitingUserInput: false,
-        currentPhase: 'information_gathering', // Continue with analysis
-        messages: [
-          ...state.messages,
-          new AIMessage(`Thank you for the additional information from Round ${state.interactionRound}. Let me analyze this with my medical team and determine if we need any clarification.`)
-        ]
-      };
-    }
-  }
-  
-  return {};
-}
 
 /**
  * Node: Diagnostic Tools
@@ -381,28 +360,21 @@ function routeWorkflow(state: MedicalDiagnosticStateType): string {
  * Routing function for patient interaction node
  */
 function routePatientInteraction(state: MedicalDiagnosticStateType): string {
-  // If we have pending questions, wait for user input (interrupt)
-  if (state.pendingQuestions.length > 0) {
+  console.log("🔀 Routing from patient_interaction");
+  console.log("Pending questions:", state.pendingQuestions.length);
+  console.log("Awaiting user input:", state.awaitingUserInput);
+  
+  // If we have pending questions and awaiting input, create interrupt
+  if (state.pendingQuestions.length > 0 && state.awaitingUserInput) {
+    console.log("🛑 Creating interrupt for user input");
     return '__end__'; // This creates an interrupt
   }
   
-  // If we just finished processing user response, continue with medical debate
+  // If we finished processing response or no questions needed, continue with workflow
+  console.log("➡️  Continuing to medical debate");
   return 'medical_debate';
 }
 
-/**
- * Routing function for after user responds
- */
-function routeAfterUserResponse(state: MedicalDiagnosticStateType): string {
-  // After processing user response, we should either:
-  // 1. Ask more questions if needed
-  if (patientQuestionAgent.shouldGenerateQuestions(state)) {
-    return 'patient_interaction';
-  }
-  
-  // 2. Continue with medical debate to analyze the new information
-  return 'medical_debate';
-}
 
 /**
  * Routing function after initialization
@@ -541,7 +513,6 @@ export function createMedicalGraph() {
     .addNode("initialize_case", initializeCase)
     .addNode("medical_debate", medicalDebate)
     .addNode("patient_interaction", patientInteraction)
-    .addNode("process_user_response", processUserResponse)
     .addNode("diagnostic_tools", executeDiagnosticTools)
     .addNode("final_assessment", finalAssessment)
     
@@ -554,11 +525,8 @@ export function createMedicalGraph() {
     // MAIN DIAGNOSTIC LOOP: Medical debate routes to different nodes
     .addConditionalEdges("medical_debate", routeWorkflow)
     
-    // PATIENT INTERACTION: Can interrupt or continue debate
+    // PATIENT INTERACTION: Can interrupt or continue debate (now handles responses internally)
     .addConditionalEdges("patient_interaction", routePatientInteraction)
-    
-    // USER RESPONSE PROCESSING: Routes back to debate or more questions
-    .addConditionalEdges("process_user_response", routeAfterUserResponse)
     
     // DIAGNOSTIC TOOLS: Always return to medical debate
     .addEdge("diagnostic_tools", "medical_debate")
