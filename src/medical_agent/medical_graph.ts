@@ -541,5 +541,8 @@ export function createMedicalGraph() {
   });
 }
 
-// Export the compiled graph
-export const medicalGraph = createMedicalGraph();
+// Import and export the minimal graph for testing
+import { minimalMedicalGraph } from "./medical_graph_minimal.js";
+
+// Export the minimal graph as the main export
+export const medicalGraph = minimalMedicalGraph;

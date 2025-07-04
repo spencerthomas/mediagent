@@ -3,7 +3,7 @@
  * Demonstrates how to use the medical superintelligence system
  */
 
-import { medicalGraph } from "./medical_graph.js";
+import { minimalMedicalGraph } from "./medical_graph_minimal.js";
 import { HumanMessage } from "@langchain/core/messages";
 
 async function runMedicalDiagnosticExample() {
@@ -26,7 +26,7 @@ Social History: Former smoker (quit 5 years ago), occasional alcohol use
   console.log("\n🤖 Starting Medical AI Diagnostic Process...\n");
 
   try {
-    const result = await medicalGraph.invoke({
+    const result = await minimalMedicalGraph.invoke({
       messages: [new HumanMessage(medicalCase)]
     }, {
       configurable: {
