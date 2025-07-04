@@ -34,22 +34,89 @@ async function initializeCase(
   state: MedicalDiagnosticStateType,
   config: RunnableConfig
 ): Promise<Partial<MedicalDiagnosticStateType>> {
+  console.log("🚨 initializeCase called");
+  console.log("Current phase:", state.currentPhase);
+  console.log("Message count:", state.messages.length);
+  console.log("Messages:", state.messages.map(m => ({ type: m.constructor.name, content: typeof m.content === 'string' ? m.content.substring(0, 100) : 'non-string' })));
+  
+  // Check if already initialized to prevent re-initialization
+  if (state.availableCaseInfo?.patientId) {
+    console.log("⚠️  Case already initialized, skipping re-initialization");
+    return {}; // Don't re-initialize
+  }
+  
   // Initialize with basic case presentation
   const lastMessage = state.messages[state.messages.length - 1];
   const caseText = typeof lastMessage?.content === 'string' ? lastMessage.content : "";
   
-  // Extract basic case information from the input
-  const caseInfo = await extractCaseInformation(caseText, config);
+  console.log("📝 Case text for extraction:", caseText.substring(0, 200));
   
-  return {
-    availableCaseInfo: caseInfo,
-    currentPhase: 'initial_assessment',
-    costBudget: 1000, // Default budget
-    messages: [
-      ...state.messages,
-      new AIMessage(`Case initialized: ${caseInfo.patientId} - ${caseInfo.chiefComplaint}`)
-    ]
-  };
+  if (!caseText || caseText.trim().length === 0) {
+    console.log("❌ No case text available, using fallback initialization");
+    // Fallback initialization without LLM call
+    const fallbackCaseInfo = {
+      patientId: `CASE_${Date.now()}`,
+      demographics: { age: 45, gender: 'unknown' },
+      chiefComplaint: "Patient case presentation",
+      historyOfPresentIllness: "Initial case presentation",
+      pastMedicalHistory: [],
+      medications: [],
+      allergies: [],
+      familyHistory: [],
+      socialHistory: ""
+    };
+    
+    return {
+      availableCaseInfo: fallbackCaseInfo,
+      currentPhase: 'initial_assessment',
+      costBudget: 1000,
+      messages: [
+        ...state.messages,
+        new AIMessage(`Case initialized: ${fallbackCaseInfo.patientId} - Please provide patient information`)
+      ]
+    };
+  }
+  
+  try {
+    // Extract basic case information from the input
+    console.log("🤖 Calling extractCaseInformation...");
+    const caseInfo = await extractCaseInformation(caseText, config);
+    console.log("✅ Case info extracted:", caseInfo.patientId);
+    
+    return {
+      availableCaseInfo: caseInfo,
+      currentPhase: 'initial_assessment',
+      costBudget: 1000, // Default budget
+      messages: [
+        ...state.messages,
+        new AIMessage(`Case initialized: ${caseInfo.patientId} - ${caseInfo.chiefComplaint}`)
+      ]
+    };
+  } catch (error) {
+    console.error("❌ Error in extractCaseInformation:", error);
+    // Fallback initialization on error
+    const fallbackCaseInfo = {
+      patientId: `CASE_${Date.now()}`,
+      demographics: { age: 45, gender: 'unknown' },
+      chiefComplaint: caseText.substring(0, 100),
+      historyOfPresentIllness: caseText,
+      pastMedicalHistory: [],
+      medications: [],
+      allergies: [],
+      familyHistory: [],
+      socialHistory: ""
+    };
+    
+    return {
+      availableCaseInfo: fallbackCaseInfo,
+      currentPhase: 'initial_assessment',
+      costBudget: 1000,
+      messages: [
+        ...state.messages,
+        new AIMessage(`Case initialized with basic info: ${fallbackCaseInfo.patientId}`)
+      ]
+    };
+  }
 }
 
 /**
@@ -255,6 +322,7 @@ Provide:
 
 /**
  * Routing function to determine next step in workflow
+ * NOTE: This should never route back to initialize_case - that only happens once at the start
  */
 function routeWorkflow(state: MedicalDiagnosticStateType): string {
   // Check if awaiting user input
@@ -308,12 +376,26 @@ function routeWorkflow(state: MedicalDiagnosticStateType): string {
  * Routing function for patient interaction node
  */
 function routePatientInteraction(state: MedicalDiagnosticStateType): string {
-  // If we have pending questions, wait for user input
+  // If we have pending questions, wait for user input (interrupt)
   if (state.pendingQuestions.length > 0) {
     return '__end__'; // This creates an interrupt
   }
   
-  // Otherwise continue with medical debate
+  // If we just finished processing user response, continue with medical debate
+  return 'medical_debate';
+}
+
+/**
+ * Routing function for after user responds
+ */
+function routeAfterUserResponse(state: MedicalDiagnosticStateType): string {
+  // After processing user response, we should either:
+  // 1. Ask more questions if needed
+  if (patientQuestionAgent.shouldGenerateQuestions(state)) {
+    return 'patient_interaction';
+  }
+  
+  // 2. Continue with medical debate to analyze the new information
   return 'medical_debate';
 }
 
@@ -324,49 +406,103 @@ async function extractCaseInformation(
   caseText: string,
   config: RunnableConfig
 ): Promise<any> {
-  const configuration = ensureMedicalConfiguration(config);
-  const model = await loadChatModel(configuration.model);
+  console.log("🔍 Starting case information extraction...");
   
-  const extractionPrompt = `
-Extract structured case information from this medical case:
+  if (!caseText || caseText.trim().length === 0) {
+    console.log("⚠️  Empty case text, returning fallback");
+    return {
+      patientId: `CASE_${Date.now()}`,
+      demographics: { age: 45, gender: 'unknown' },
+      chiefComplaint: "No case information provided",
+      historyOfPresentIllness: "Initial case presentation"
+    };
+  }
+  
+  try {
+    const configuration = ensureMedicalConfiguration(config);
+    const model = await loadChatModel(configuration.model);
+    
+    const extractionPrompt = `
+Extract structured case information from this medical case and respond with ONLY valid JSON:
 
 ${caseText}
 
-Extract and format as JSON:
-- patientId: generate a unique ID
-- demographics: age, gender, occupation if mentioned
-- chiefComplaint: primary reason for visit
-- historyOfPresentIllness: detailed history if available
-- pastMedicalHistory: relevant past medical history
-- medications: current medications
-- allergies: known allergies
-- familyHistory: relevant family history
-- socialHistory: relevant social history
+Required JSON format:
+{
+  "patientId": "generate a unique ID like CASE_123",
+  "demographics": {"age": number, "gender": "male/female/unknown"},
+  "chiefComplaint": "primary reason for visit",
+  "historyOfPresentIllness": "detailed history",
+  "pastMedicalHistory": [],
+  "medications": [],
+  "allergies": [],
+  "familyHistory": [],
+  "socialHistory": ""
+}
 
-If information is not available, use appropriate defaults or null values.
+If information is not available, use appropriate defaults. Respond with ONLY the JSON object.
 `;
 
-  const response = await model.invoke([new HumanMessage(extractionPrompt)]);
-  
-  try {
-    const content = typeof response.content === 'string' ? response.content : '{}';
-    return JSON.parse(content);
-  } catch (error) {
-    // Fallback to basic case information
+    console.log("🤖 Making LLM call for case extraction...");
+    const response = await model.invoke([new HumanMessage(extractionPrompt)]);
+    console.log("✅ LLM response received");
+    
+    try {
+      const content = typeof response.content === 'string' ? response.content : '{}';
+      const parsed = JSON.parse(content);
+      
+      // Ensure required fields exist
+      const result = {
+        patientId: parsed.patientId || `CASE_${Date.now()}`,
+        demographics: parsed.demographics || { age: 45, gender: 'unknown' },
+        chiefComplaint: parsed.chiefComplaint || caseText.substring(0, 100),
+        historyOfPresentIllness: parsed.historyOfPresentIllness || caseText,
+        pastMedicalHistory: Array.isArray(parsed.pastMedicalHistory) ? parsed.pastMedicalHistory : [],
+        medications: Array.isArray(parsed.medications) ? parsed.medications : [],
+        allergies: Array.isArray(parsed.allergies) ? parsed.allergies : [],
+        familyHistory: Array.isArray(parsed.familyHistory) ? parsed.familyHistory : [],
+        socialHistory: parsed.socialHistory || ""
+      };
+      
+      console.log("✅ Case info parsed successfully:", result.patientId);
+      return result;
+    } catch (parseError) {
+      console.log("⚠️  JSON parse error, using fallback:", parseError);
+      // Fallback to basic case information
+      return {
+        patientId: `CASE_${Date.now()}`,
+        demographics: { age: 45, gender: 'unknown' },
+        chiefComplaint: caseText.substring(0, 100),
+        historyOfPresentIllness: caseText,
+        pastMedicalHistory: [],
+        medications: [],
+        allergies: [],
+        familyHistory: [],
+        socialHistory: ""
+      };
+    }
+  } catch (llmError) {
+    console.error("❌ LLM call failed:", llmError);
+    // Fallback on LLM error
     return {
       patientId: `CASE_${Date.now()}`,
-      demographics: {
-        age: 45,
-        gender: 'unknown'
-      },
-      chiefComplaint: caseText.substring(0, 100) + '...',
-      historyOfPresentIllness: caseText
+      demographics: { age: 45, gender: 'unknown' },
+      chiefComplaint: caseText.substring(0, 100),
+      historyOfPresentIllness: caseText,
+      pastMedicalHistory: [],
+      medications: [],
+      allergies: [],
+      familyHistory: [],
+      socialHistory: ""
     };
   }
 }
 
 /**
  * Create and compile the medical diagnostic workflow graph
+ * 
+ * Flow: __start__ → initialize_case → [diagnostic_loop] → final_assessment → __end__
+ * Where diagnostic_loop = medical_debate ↔ patient_interaction ↔ diagnostic_tools
  */
 export function createMedicalGraph() {
   const workflow = new StateGraph(MedicalDiagnosticAnnotation, ConfigurationSchema)
@@ -378,30 +514,25 @@ export function createMedicalGraph() {
     .addNode("diagnostic_tools", executeDiagnosticTools)
     .addNode("final_assessment", finalAssessment)
     
-    // Set entry point
+    // ENTRY POINT: Initialize case once
     .addEdge("__start__", "initialize_case")
     
-    // Define workflow routing
-    .addConditionalEdges(
-      "initialize_case",
-      () => "medical_debate"
-    )
-    .addConditionalEdges(
-      "medical_debate",
-      routeWorkflow
-    )
-    .addConditionalEdges(
-      "patient_interaction",
-      routePatientInteraction
-    )
-    .addConditionalEdges(
-      "process_user_response",
-      () => "medical_debate"
-    )
-    .addConditionalEdges(
-      "diagnostic_tools",
-      () => "medical_debate"
-    )
+    // INITIALIZATION: Always go to medical debate after initialization
+    .addEdge("initialize_case", "medical_debate")
+    
+    // MAIN DIAGNOSTIC LOOP: Medical debate routes to different nodes
+    .addConditionalEdges("medical_debate", routeWorkflow)
+    
+    // PATIENT INTERACTION: Can interrupt or continue debate
+    .addConditionalEdges("patient_interaction", routePatientInteraction)
+    
+    // USER RESPONSE PROCESSING: Routes back to debate or more questions
+    .addConditionalEdges("process_user_response", routeAfterUserResponse)
+    
+    // DIAGNOSTIC TOOLS: Always return to medical debate
+    .addEdge("diagnostic_tools", "medical_debate")
+    
+    // FINAL ASSESSMENT: End the workflow
     .addEdge("final_assessment", "__end__");
 
   return workflow.compile({
