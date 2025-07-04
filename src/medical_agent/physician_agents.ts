@@ -407,7 +407,7 @@ ${info.medications?.length && Array.isArray(info.medications) ? `Medications: ${
     const evidence: DiagnosticEvidence[] = [];
     
     // Extract symptoms from chief complaint and history
-    const chiefComplaint = state.availableCaseInfo.chiefComplaint.toLowerCase();
+    const chiefComplaint = state.availableCaseInfo.chiefComplaint?.toLowerCase() || '';
     const history = state.availableCaseInfo.historyOfPresentIllness?.toLowerCase() || '';
     
     // Common symptom mapping
@@ -477,7 +477,7 @@ ${info.medications?.length && Array.isArray(info.medications) ? `Medications: ${
     }
     
     // Apply demographic evidence
-    if (state.availableCaseInfo.demographics.age >= 65) {
+    if (state.availableCaseInfo.demographics?.age && state.availableCaseInfo.demographics.age >= 65) {
       evidence.push({
         type: 'demographic',
         name: 'age_over_65',
