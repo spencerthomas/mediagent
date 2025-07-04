@@ -3,7 +3,7 @@
  * Comprehensive test suite for Bayesian probability calculations
  */
 
-import { BayesianDiagnosticEngine, DiagnosticEvidence } from '../bayesian_engine';
+import { BayesianDiagnosticEngine, DiagnosticEvidence } from '../bayesian_engine.js';
 
 describe('BayesianDiagnosticEngine', () => {
   let engine: BayesianDiagnosticEngine;

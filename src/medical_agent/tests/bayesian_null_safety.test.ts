@@ -3,8 +3,8 @@
  * Tests handling of null/undefined values in medical case data
  */
 
-import { PhysicianAgent, PHYSICIAN_AGENTS } from '../physician_agents';
-import { MedicalDiagnosticStateType } from '../medical_state';
+import { PhysicianAgent, PHYSICIAN_AGENTS } from '../physician_agents.js';
+import { MedicalDiagnosticStateType } from '../medical_state.js';
 import { HumanMessage } from '@langchain/core/messages';
 
 // Mock chat model for testing

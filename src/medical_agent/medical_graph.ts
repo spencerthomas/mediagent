@@ -37,12 +37,17 @@ async function initializeCase(
   console.log("🚨 initializeCase called");
   console.log("Current phase:", state.currentPhase);
   console.log("Message count:", state.messages.length);
-  console.log("Messages:", state.messages.map(m => ({ type: m.constructor.name, content: typeof m.content === 'string' ? m.content.substring(0, 100) : 'non-string' })));
+  console.log("Awaiting user input:", state.awaitingUserInput);
+  console.log("Pending questions:", state.pendingQuestions?.length || 0);
   
-  // Check if already initialized to prevent re-initialization
+  // CRITICAL: If case is already initialized, DO NOT re-initialize
+  // This prevents the infinite loop when resuming from interrupts
   if (state.availableCaseInfo?.patientId) {
-    console.log("⚠️  Case already initialized, skipping re-initialization");
-    return {}; // Don't re-initialize
+    console.log("⚠️  Case already initialized with ID:", state.availableCaseInfo.patientId);
+    console.log("🔄 This appears to be a resume from interrupt - skipping initialization");
+    
+    // Don't add any new messages or change state - just pass through
+    return {};
   }
   
   // Initialize with basic case presentation
@@ -400,6 +405,32 @@ function routeAfterUserResponse(state: MedicalDiagnosticStateType): string {
 }
 
 /**
+ * Routing function after initialization
+ */
+function routeAfterInitialization(state: MedicalDiagnosticStateType): string {
+  console.log("🔀 Routing after initialization");
+  console.log("Has patient ID:", !!state.availableCaseInfo?.patientId);
+  console.log("Current phase:", state.currentPhase);
+  console.log("Awaiting user input:", state.awaitingUserInput);
+  
+  // If this was a resume from interrupt (case already initialized), 
+  // check what the appropriate next step should be
+  if (state.currentPhase === 'patient_interaction' || state.awaitingUserInput) {
+    console.log("🔄 Resuming patient interaction flow");
+    return 'patient_interaction';
+  }
+  
+  if (state.currentPhase === 'final_diagnosis' || state.readyForDiagnosis) {
+    console.log("🎯 Going to final assessment");
+    return 'final_assessment';
+  }
+  
+  // For new cases or normal flow, go to medical debate
+  console.log("🏥 Starting medical debate");
+  return 'medical_debate';
+}
+
+/**
  * Helper function to extract case information from text
  */
 async function extractCaseInformation(
@@ -517,8 +548,8 @@ export function createMedicalGraph() {
     // ENTRY POINT: Initialize case once
     .addEdge("__start__", "initialize_case")
     
-    // INITIALIZATION: Always go to medical debate after initialization
-    .addEdge("initialize_case", "medical_debate")
+    // INITIALIZATION: Route appropriately after initialization
+    .addConditionalEdges("initialize_case", routeAfterInitialization)
     
     // MAIN DIAGNOSTIC LOOP: Medical debate routes to different nodes
     .addConditionalEdges("medical_debate", routeWorkflow)
@@ -541,8 +572,5 @@ export function createMedicalGraph() {
   });
 }
 
-// Import and export the minimal graph for testing
-import { minimalMedicalGraph } from "./medical_graph_minimal.js";
-
-// Export the minimal graph as the main export
-export const medicalGraph = minimalMedicalGraph;
+// Export the compiled graph
+export const medicalGraph = createMedicalGraph();
