@@ -7,6 +7,7 @@ import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { RunnableConfig } from "@langchain/core/runnables";
 import { MedicalDiagnosticStateType, DiagnosisHypothesis, AgentTurn } from "./medical_state.js";
 import { ensureMedicalConfiguration } from "./configuration.js";
+import { BayesianDiagnosticEngine, DiagnosticEvidence } from "./bayesian_engine.js";
 
 export type PhysicianRole = 'hypothesis' | 'test_chooser' | 'challenger' | 'stewardship' | 'checklist';
 
@@ -22,29 +23,32 @@ export const PHYSICIAN_AGENTS: Record<PhysicianRole, PhysicianAgentConfig> = {
     role: 'hypothesis',
     name: 'Dr. Hypothesis',
     specialization: 'Differential Diagnosis Specialist',
-    systemPrompt: `You are Dr. Hypothesis, a specialist in differential diagnosis and medical reasoning.
+    systemPrompt: `You are Dr. Hypothesis, a specialist in differential diagnosis and formal Bayesian medical reasoning.
 
 Your primary responsibilities:
 1. Generate comprehensive differential diagnoses based on available information
-2. Rank diagnoses by probability using clinical reasoning
-3. Update diagnostic hypotheses as new information becomes available
-4. Provide clear reasoning for each diagnostic consideration
+2. Apply formal Bayesian probability updating using likelihood ratios and prior probabilities
+3. Update diagnostic hypotheses as new evidence becomes available
+4. Provide mathematically rigorous probability assessments
 
 When analyzing a case:
 - Consider all possible diagnoses that could explain the patient's presentation
-- Rank them by likelihood based on prevalence, clinical presentation, and available data
-- Provide probability estimates (0-100%) for each diagnosis
+- Use formal Bayesian reasoning to update probabilities based on new evidence
+- Account for disease prevalence (prior probabilities) in your calculations
+- Apply likelihood ratios for symptoms, test results, and demographic factors
+- Provide precise probability estimates (0-100%) for each diagnosis
 - Include both common and rare conditions when appropriate
-- Explain your reasoning clearly and concisely
+- Show your Bayesian reasoning explicitly
 
 Format your response as:
-- Primary considerations (most likely diagnoses)
-- Secondary considerations (less likely but possible)
-- Reasoning for each diagnosis
-- Probability estimates
+- Primary considerations (most likely diagnoses with Bayesian probabilities)
+- Secondary considerations (less likely but possible diagnoses)
+- Evidence assessment (likelihood ratios for key findings)
+- Probability updates based on new evidence
+- Information gain analysis for potential additional tests
 - Next information needed to refine diagnoses
 
-Stay focused on diagnostic reasoning and avoid making treatment recommendations.`
+Use formal medical reasoning with Bayesian probability updating. Stay focused on diagnostic reasoning and avoid making treatment recommendations.`
   },
   
   test_chooser: {
@@ -190,10 +194,14 @@ Maintain high standards while being constructive and supportive of the diagnosti
 };
 
 export class PhysicianAgent {
+  private bayesianEngine: BayesianDiagnosticEngine;
+
   constructor(
     private config: PhysicianAgentConfig,
     private loadChatModel: (modelName: string) => Promise<any>
-  ) {}
+  ) {
+    this.bayesianEngine = new BayesianDiagnosticEngine();
+  }
 
   async generateResponse(
     state: MedicalDiagnosticStateType,
@@ -203,9 +211,15 @@ export class PhysicianAgent {
     const configuration = ensureMedicalConfiguration(config);
     const model = await this.loadChatModel(configuration.model);
     
+    // For hypothesis agent, prepare Bayesian analysis
+    let bayesianAnalysis = '';
+    if (this.config.role === 'hypothesis') {
+      bayesianAnalysis = this.prepareBayesianAnalysis(state);
+    }
+    
     const messages = [
       new SystemMessage(this.config.systemPrompt),
-      new HumanMessage(this.buildContextualPrompt(state, context))
+      new HumanMessage(this.buildContextualPrompt(state, context, bayesianAnalysis))
     ];
 
     const response = await model.invoke(messages);
@@ -213,7 +227,7 @@ export class PhysicianAgent {
     return this.parseResponse(response.content, state);
   }
 
-  private buildContextualPrompt(state: MedicalDiagnosticStateType, context: string): string {
+  private buildContextualPrompt(state: MedicalDiagnosticStateType, context: string, bayesianAnalysis: string = ''): string {
     const caseInfo = this.formatCaseInformation(state);
     const currentDiagnoses = this.formatDifferentialDiagnoses(state);
     const previousTurns = this.formatPreviousTurns(state);
@@ -236,7 +250,10 @@ DEBATE ROUND: ${state.debateRound}
 CUMULATIVE COST: $${state.cumulativeCost}
 BUDGET: $${state.costBudget}
 
-Please provide your expert analysis and recommendations as ${this.config.name}.
+${bayesianAnalysis ? `BAYESIAN ANALYSIS:
+${bayesianAnalysis}
+
+` : ''}Please provide your expert analysis and recommendations as ${this.config.name}.
 `;
   }
 
@@ -364,5 +381,146 @@ ${info.medications?.length && Array.isArray(info.medications) ? `Medications: ${
     }
     
     return biases;
+  }
+
+  private prepareBayesianAnalysis(state: MedicalDiagnosticStateType): string {
+    // Reset the Bayesian engine for this case
+    this.bayesianEngine.reset();
+    
+    // Initialize diagnoses with prior probabilities if we have differential diagnoses
+    if (state.differentialDiagnoses.length > 0) {
+      for (const diagnosis of state.differentialDiagnoses) {
+        const priorProbability = diagnosis.probability / 100; // Convert percentage to probability
+        this.bayesianEngine.initializeDiagnosis(
+          diagnosis.condition.toLowerCase().replace(/\s+/g, '_'),
+          priorProbability
+        );
+      }
+    } else {
+      // Initialize with common conditions if no diagnoses yet
+      this.bayesianEngine.initializeDiagnosis('myocardial_infarction', 0.02);
+      this.bayesianEngine.initializeDiagnosis('pneumonia', 0.05);
+      this.bayesianEngine.initializeDiagnosis('gastroenteritis', 0.15);
+    }
+    
+    // Apply evidence from case information
+    const evidence: DiagnosticEvidence[] = [];
+    
+    // Extract symptoms from chief complaint and history
+    const chiefComplaint = state.availableCaseInfo.chiefComplaint?.toLowerCase() || '';
+    const history = state.availableCaseInfo.historyOfPresentIllness?.toLowerCase() || '';
+    
+    // Common symptom mapping
+    if (chiefComplaint.includes('chest pain') || history.includes('chest pain')) {
+      if (chiefComplaint.includes('crushing') || history.includes('crushing')) {
+        evidence.push({
+          type: 'symptom',
+          name: 'chest_pain_crushing',
+          value: true,
+          confidence: 0.9,
+          timestamp: new Date()
+        });
+      }
+    }
+    
+    if (chiefComplaint.includes('fever') || history.includes('fever')) {
+      evidence.push({
+        type: 'symptom',
+        name: 'fever',
+        value: true,
+        confidence: 0.9,
+        timestamp: new Date()
+      });
+    }
+    
+    if (chiefComplaint.includes('nausea') || history.includes('nausea')) {
+      evidence.push({
+        type: 'symptom',
+        name: 'nausea',
+        value: true,
+        confidence: 0.8,
+        timestamp: new Date()
+      });
+    }
+    
+    if (chiefComplaint.includes('cough') || history.includes('cough')) {
+      evidence.push({
+        type: 'symptom',
+        name: 'cough',
+        value: true,
+        confidence: 0.9,
+        timestamp: new Date()
+      });
+    }
+    
+    if (chiefComplaint.includes('shortness of breath') || history.includes('shortness of breath')) {
+      evidence.push({
+        type: 'symptom',
+        name: 'shortness_of_breath',
+        value: true,
+        confidence: 0.9,
+        timestamp: new Date()
+      });
+    }
+    
+    // Apply diagnostic test results
+    for (const testResult of state.diagnosticTests) {
+      if (testResult.testName.toLowerCase().includes('troponin') && testResult.result.includes('elevated')) {
+        evidence.push({
+          type: 'test_result',
+          name: 'troponin_elevated',
+          value: true,
+          confidence: 0.95,
+          timestamp: new Date()
+        });
+      }
+    }
+    
+    // Apply demographic evidence
+    if (state.availableCaseInfo.demographics?.age && state.availableCaseInfo.demographics.age >= 65) {
+      evidence.push({
+        type: 'demographic',
+        name: 'age_over_65',
+        value: true,
+        confidence: 1.0,
+        timestamp: new Date()
+      });
+    }
+    
+    // Update probabilities with all evidence
+    for (const ev of evidence) {
+      this.bayesianEngine.updateWithEvidence(ev);
+    }
+    
+    // Generate Bayesian analysis summary
+    const rankedDiagnoses = this.bayesianEngine.getRankedDiagnoses();
+    
+    let analysis = "FORMAL BAYESIAN PROBABILITY ANALYSIS:\n\n";
+    analysis += "Updated Diagnosis Probabilities:\n";
+    
+    for (const diagnosis of rankedDiagnoses) {
+      const percentage = (diagnosis.posteriorProbability * 100).toFixed(1);
+      analysis += `- ${diagnosis.condition.replace(/_/g, ' ')}: ${percentage}%\n`;
+    }
+    
+    analysis += "\nEvidence Applied:\n";
+    for (const ev of evidence) {
+      analysis += `- ${ev.name.replace(/_/g, ' ')}: ${ev.value} (confidence: ${(ev.confidence * 100).toFixed(0)}%)\n`;
+    }
+    
+    // Information gain analysis for potential tests
+    analysis += "\nInformation Gain Analysis for Potential Tests:\n";
+    const potentialTests = [
+      { type: 'test_result' as const, name: 'troponin_elevated', value: true, confidence: 0.95 },
+      { type: 'test_result' as const, name: 'chest_xray_infiltrate', value: true, confidence: 0.9 },
+      { type: 'symptom' as const, name: 'diaphoresis', value: true, confidence: 0.8 }
+    ];
+    
+    for (const test of potentialTests) {
+      const infoGain = this.bayesianEngine.calculateInformationGain(test);
+      analysis += `- ${test.name.replace(/_/g, ' ')}: ${infoGain.toFixed(3)} bits\n`;
+    }
+    
+    return analysis;
   }
 }
